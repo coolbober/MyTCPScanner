@@ -1,35 +1,63 @@
 import com.google.gson.Gson;
+
 import java.io.*;
+import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class Main {
 
+    /**
+     * ports - список введенных портов
+     * ipAddresses - список введенных ip-адресов
+     * mapList - список из трех мап, который далее преобразуется в контейнер в json
+     * FILE_NAME - адрес файла, куда ведется запись результата сканирования
+     * countThreads - количество потоков, по дефолту 1, но далее принимает введенное значение
+     * startTime - отметка времени старта приложения
+     * endTime - отметчка времени конца приложения
+     * threadPool - пул потоков
+     * callList - список Callable
+     */
     static List<Integer> ports = new CopyOnWriteArrayList<>();
     static List<String> ipAddresses = new CopyOnWriteArrayList<>();
     static List<Map<String, String>> mapList = new CopyOnWriteArrayList<>();
     static final String FILE_NAME = "./src/main/resources/TCPPorts.json";
-    static final int countThreads = 1;
-    static volatile AtomicInteger i = new AtomicInteger(0);
-    static volatile AtomicInteger j = new AtomicInteger(0);
-    static ExecutorService threadPool = Executors.newFixedThreadPool(countThreads);
-    //-h 192.168.88.1-4 -p 139
-    // -h 173.194.222.121,192.168.88.1-4 -p 80,139-141
-    //173.194.222.121
-    //80
-    //www.bootdev.ru
-    public static void main(String[] args) throws ExecutionException, InterruptedException {
+    static int countThreads = 1;
+    static long startTime = System.currentTimeMillis();
+    static long endTime = 0L;
+    static ExecutorService threadPool;
+    static List<Callable<Map<String, String>>> callList = new ArrayList<>();
+    // -h 173.194.222.121,192.168.88.1-4 -p 80,139-141 -t 5  пример
+
+    public static void main(String[] args) throws InterruptedException {
 
         try(BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));) {
             inputProcessing(reader.readLine().split("\\s"));
+            threadPool = Executors.newFixedThreadPool(countThreads);
             if (ports.size() > 0 && ipAddresses.size() > 0) {
-                    while (j.get() < ipAddresses.size() && i.get() < ports.size()) {
-                        mapList.add(threadPool.submit(new ProcessThread(i, j, ipAddresses, ports)).get());
+                for (int i = 0; i < ports.size(); i++){
+                    for (int j = 0; j < ipAddresses.size(); j++){
+                        int finalI1 = i;
+                        int finalJ1 = j;
+                        callList.add(new Callable<Map<String, String>>() {
+                            @Override
+                            public Map<String, String> call() {
+                                Map<String, String> result = new HashMap<>();
+                                result.put("ip", ipAddresses.get(finalJ1));
+                                result.put("port", String.valueOf(ports.get(finalI1)));
+                                result.put("Is connected", Boolean.toString(isActivePort(ipAddresses.get(finalJ1), ports.get(finalI1))));
+                                mapList.add(result);
+                                return result;
+                            }
+                        });
                     }
+                }
+                threadPool.invokeAll(callList);
                 threadPool.shutdown();
             } else
                 System.out.println("Нет чего-то");
@@ -41,8 +69,15 @@ public class Main {
         } catch (IOException ex){
             System.out.println("Запись не удалась");
         }
+        endTime = System.currentTimeMillis();
+        System.out.println("Время работы программы: " + (endTime - startTime)/1000 + " сек.");
     }
 
+    /**
+     * Метод для обработки введенной строки, здесь заполняются списки с адресами и портами,
+     * вычисляется желаемое количество потоков
+     * @param strings введенная строка, представленная в виде массива слов
+     */
     private static void inputProcessing(String[] strings){
         for (int i = 0; i < strings.length; i++){
             if (strings[i].equals("-h")){
@@ -91,7 +126,29 @@ public class Main {
                         ports.add(k);
                 } else
                     ports.add(Integer.parseInt(strings[i]));
+            } if(strings[i].equals("-t")){
+                i++;
+                countThreads = Integer.parseInt(strings[i]);
             }
+        }
+    }
+
+    /**
+     * Метод, который проверяет подключение по переданному адресу
+     * @param host
+     * и порту
+     * @param port
+     * и возвращается true или false
+     * @return
+     */
+    public static boolean isActivePort(String host, int port){
+        try(Socket socket = new Socket(host, port)) {
+            socket.setSoTimeout(10);
+            if(socket.isConnected())
+                return true;
+            return false;
+        } catch (IOException e) {
+            return false;
         }
     }
 }
